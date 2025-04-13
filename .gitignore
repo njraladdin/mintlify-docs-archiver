@@ -1,6 +1,7 @@
 output/
 project.md
-
+output-spa/
+output-static/
 # Node.js dependencies
 node_modules/
 npm-debug.log
