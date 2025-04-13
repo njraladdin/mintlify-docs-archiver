@@ -36,3 +36,5 @@ Thumbs.db
 
 # Coverage directory used by tools like istanbul
 coverage/
+
+website/
