@@ -4,6 +4,9 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 const { URL } = require('url');
 
+// Import the JSON extractor module
+const jsonExtractor = require('./jsonExtractor');
+
 // --- Configuration ---
 const BASE_URL = 'https://docs.lovable.dev';
 const ALLOWED_DOMAINS = [
@@ -18,8 +21,9 @@ const CSS_DIR = path.join(OUTPUT_DIR, 'css');
 const JS_DIR = path.join(OUTPUT_DIR, 'js');
 const ASSETS_DIR = path.join(OUTPUT_DIR, 'assets');
 const FONTS_DIR = path.join(OUTPUT_DIR, 'fonts');
+const JSON_DIR = path.join(OUTPUT_DIR, 'json');
 const WAIT_TIME = 3000; // Time to wait for page to fully load in ms
-const MAX_PAGES = 5; // Maximum number of pages to process (set to -1 for unlimited)
+const MAX_PAGES = -1; // Maximum number of pages to process (set to -1 for unlimited)
 const DEBUG = true; // Enable debug logging
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36';
 
@@ -1579,6 +1583,137 @@ async function processJsFileEdgeCases(collectedData) {
     console.log("\n--- JS edge case processing phase complete ---\n");
 }
 
+/**
+ * Process navigation links to add base tag and fix relative paths
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function processNavigationLinks(collectedData) {
+    console.log("\n--- Starting navigation link processing phase ---\n");
+    
+    // Process each HTML file
+    let processedFileCount = 0;
+    
+    for (const page of collectedData.pages) {
+        if (!page.htmlFile) continue;
+        
+        const htmlFilePath = path.join(OUTPUT_DIR, page.htmlFile);
+        console.log(`Processing navigation links in: ${htmlFilePath}`);
+        
+        try {
+            // Read the HTML file
+            let htmlContent = await fs.readFile(htmlFilePath, 'utf8');
+            
+            // Simple direct approach: Add a script at the beginning of the head
+            const headStartIndex = htmlContent.indexOf('<head>');
+            if (headStartIndex !== -1) {
+                const fixScript = `<head>
+  <!-- Direct Link Fixer -->
+  <script>
+    // Store original addEventListener
+    const originalAddEventListener = EventTarget.prototype.addEventListener;
+    
+    // Override addEventListener to intercept all click events
+    EventTarget.prototype.addEventListener = function(type, listener, options) {
+      if (type === 'click') {
+        // Create a wrapped listener that will check for link clicks
+        const wrappedListener = function(event) {
+          // Handle link clicks
+          if (event.target.tagName === 'A' || 
+              (event.target.parentElement && event.target.parentElement.tagName === 'A')) {
+            
+            // Get the link element
+            const link = event.target.tagName === 'A' ? event.target : event.target.parentElement;
+            const href = link.getAttribute('href');
+            
+            // Check if it's an absolute path that needs to be fixed
+            if (href && href.startsWith('/')) {
+              // Prevent the default click behavior
+              event.preventDefault();
+              event.stopPropagation();
+              
+              // Convert absolute path to a local file reference
+              // Strip the leading slash and add .html if needed
+              let localPath = href.substring(1);
+              if (!localPath.includes('.')) {
+                localPath += '.html';
+              }
+              
+              console.log('Intercepted click on', href, '- redirecting to', localPath);
+              
+              // Navigate directly
+              window.location.href = localPath;
+              return false;
+            }
+          }
+          
+          // Otherwise call the original listener
+          return listener.call(this, event);
+        };
+        
+        // Call the original addEventListener with our wrapped listener
+        return originalAddEventListener.call(this, type, wrappedListener, options);
+      }
+      
+      // For non-click events, just pass through
+      return originalAddEventListener.call(this, type, listener, options);
+    };
+    
+    // Execute on page load to fix any links
+    window.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('a[href^="/"]').forEach(function(link) {
+        const href = link.getAttribute('href');
+        let localPath = href.substring(1);
+        
+        // Add .html extension if needed
+        if (!localPath.includes('.')) {
+          localPath += '.html';
+        }
+        
+        // Update the href
+        link.setAttribute('href', localPath);
+        
+        // Add a direct click handler to be double-sure
+        link.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('Direct link clicked:', localPath);
+          window.location.href = localPath;
+        }, true);
+      });
+    });
+  </script>`;
+                
+                // Insert the script at the beginning of the head
+                htmlContent = htmlContent.replace('<head>', fixScript);
+                
+                // Save the modified file
+                await fs.writeFile(htmlFilePath, htmlContent);
+                console.log(`Added direct link fixer script to ${htmlFilePath}`);
+                processedFileCount++;
+            } else {
+                console.warn(`Could not find <head> tag in ${htmlFilePath}`);
+            }
+            
+        } catch (error) {
+            console.error(`Error processing navigation links in ${htmlFilePath}: ${error.message}`);
+        }
+    }
+    
+    console.log(`\nProcessed ${processedFileCount} HTML files with direct link fixer script`);
+    console.log("\n--- Navigation link processing phase complete ---\n");
+}
+
+/**
+ * Extract Next.js data from HTML files and save it to JSON folder
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function extractNextJsData(collectedData) {
+    // Delegate to the jsonExtractor module
+    await jsonExtractor.extractNextJsData(collectedData, OUTPUT_DIR, JSON_DIR);
+}
+
 // Main execution function
 async function main() {
     const maxPages = MAX_PAGES;
@@ -1590,6 +1725,7 @@ async function main() {
     await ensureOutputDir(JS_DIR);
     await ensureOutputDir(ASSETS_DIR);
     await ensureOutputDir(FONTS_DIR);
+    await ensureOutputDir(JSON_DIR);
     
     // Initialize data collection object
     const collectedData = {
@@ -1612,7 +1748,8 @@ async function main() {
             downloadStatus: {
                 success: 0,
                 failed: 0
-            }
+            },
+            extractedNextJsData: 0
         }
     };
     
@@ -1692,7 +1829,13 @@ async function main() {
     // Phase 6: Process JS edge cases
     await processJsFileEdgeCases(collectedData);
     
-    // Phase 7: Save the final data
+    // Phase 7: Process navigation links
+    await processNavigationLinks(collectedData);
+    
+    // Phase 8: Extract Next.js data
+    await extractNextJsData(collectedData);
+    
+    // Phase 9: Save the final data
     const outputFile = path.join(OUTPUT_DIR, 'collected-data.json');
     await fs.writeFile(outputFile, JSON.stringify(collectedData, null, 2));
     console.log(`Saved collected data to ${outputFile}`);
