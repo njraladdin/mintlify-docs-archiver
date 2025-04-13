@@ -51,6 +51,91 @@ function makeSafeFilename(url) {
         // Get the file name from the pathname
         let filename = path.basename(pathname);
         
+        // Special handling for SVG files
+        if (url.toLowerCase().includes('.svg') || pathname.toLowerCase().endsWith('.svg')) {
+            // Check for various template patterns in the URL
+            if (url.includes('${t}') || url.includes('${r') || url.includes('$\\{t\\}')) {
+                // Extract the variable name from patterns with template literals
+                if (url.includes('lucide/${t}.svg') || url.includes('lucide/$\\{t\\}.svg')) {
+                    return "${t}.svg";
+                }
+                
+                // Handle other template patterns
+                if (url.includes('brands/${t}.svg') || url.includes('brands/$\\{t\\}.svg')) {
+                    return "${t}.svg";
+                }
+                
+                // Handle the pattern with r??\"regular\"
+                if (url.includes('${r??\"regular\"}/${t}') || url.includes('$\\{r\\?\\?\\\"regular\\\"\\}/$\\{t\\}')) {
+                    return "${t}.svg";
+                }
+                
+                // Default case for template variables
+                return "${t}.svg";
+            }
+            
+            // Check for placeholder template variables like ${t}
+            const templateMatch = url.match(/\/([^\/]+)\/${?t}?\.svg/i) || url.match(/\/([^\/]+)\$\{t\}\.svg/i);
+            if (templateMatch) {
+                return "${t}.svg";
+            }
+            
+            // First check for mintlify SVG patterns specifically
+            if (hostname.includes('mintlify') || url.includes('mintlify')) {
+                // Extract just the SVG name from patterns like mintlify-b-cdn-net/v6-6-0/regular/address-card.svg
+                const segments = pathname.split('/').filter(Boolean);
+                const lastSegment = segments[segments.length - 1];
+                
+                if (lastSegment) {
+                    // Clean up the segment, removing query params
+                    const cleanSegment = lastSegment.split('?')[0].split('#')[0];
+                    
+                    // If it's a direct SVG file
+                    if (cleanSegment.toLowerCase().endsWith('.svg')) {
+                        return cleanSegment.toLowerCase();
+                    }
+                    
+                    // If it doesn't have an extension, add .svg
+                    if (!cleanSegment.includes('.')) {
+                        return `${cleanSegment.toLowerCase()}.svg`;
+                    }
+                    
+                    return cleanSegment.toLowerCase();
+                }
+            }
+            
+            // Extract the base name for SVG files (removing any query params)
+            const svgName = path.basename(pathname).split('?')[0].split('#')[0];
+            if (svgName && svgName !== '/' && svgName.toLowerCase().endsWith('.svg')) {
+                return svgName.toLowerCase(); // Return just the SVG filename
+            }
+            
+            // If we can't extract the name directly, try to get it from the path
+            const segments = pathname.split('/').filter(Boolean);
+            let lastSegment = segments[segments.length - 1];
+            
+            // Clean up the segment, removing query params
+            if (lastSegment) {
+                lastSegment = lastSegment.split('?')[0].split('#')[0];
+                
+                if (lastSegment.toLowerCase().endsWith('.svg')) {
+                    return lastSegment.toLowerCase();
+                }
+            }
+            
+            // For SVGs in URL paths like /v6.6.0/lucide/search.svg, extract just the last part
+            if (segments.length > 0) {
+                const lastPathComponent = segments[segments.length - 1].split('?')[0].split('#')[0];
+                if (lastPathComponent) {
+                    // If it doesn't have an extension, add .svg
+                    if (!lastPathComponent.includes('.')) {
+                        return `${lastPathComponent.toLowerCase()}.svg`;
+                    }
+                    return lastPathComponent.toLowerCase();
+                }
+            }
+        }
+        
         // If filename is empty or just a slash, use part of the pathname
         if (!filename || filename === '/') {
             const segments = pathname.split('/').filter(Boolean);
@@ -304,6 +389,23 @@ async function collectPageResources(page) {
                 }
             });
             
+            // Extract SVG images from mask-image properties (including those with encoded quotes)
+            document.querySelectorAll('[style*="mask-image"]').forEach(el => {
+                const styleAttr = el.getAttribute('style');
+                if (styleAttr) {
+                    // Handle both regular quotes and HTML entity quotes (&quot;)
+                    const maskUrlRegex = /mask-image:\s*url\((?:['"]|&quot;)([^'"&]*)(?:['"]|&quot;)\)/i;
+                    const match = maskUrlRegex.exec(styleAttr);
+                    if (match && match[1]) {
+                        const svgUrl = match[1];
+                        const absUrl = toAbsoluteUrl(svgUrl);
+                        if (absUrl) {
+                            items.push(absUrl);
+                        }
+                    }
+                }
+            });
+            
             // Also look for dynamically loaded resources in inline scripts
             document.querySelectorAll('script:not([src])').forEach(script => {
                 const content = script.textContent || '';
@@ -411,12 +513,41 @@ async function collectPageResources(page) {
         
         // Add explicit Next.js CSS pattern extraction from HTML content
         const pageHtml = await page.content();
+        
+        // Find all Next.js CSS files
         const nextCssPattern = /_next\/static\/css\/[^"']+\.css/g;
         let cssMatch;
         while ((cssMatch = nextCssPattern.exec(pageHtml)) !== null) {
             const cssPath = cssMatch[0];
             const fullCssUrl = BASE_URL + '/' + cssPath.replace(/^\//, '');
             resources.push(fullCssUrl);
+        }
+        
+        // Find all Next.js JavaScript files
+        const nextJsPatterns = [
+            /_next\/static\/chunks\/[^"']+\.js/g,
+            /_next\/static\/[^"'\/]+\/[^"']+\.js/g, // For build manifest and SSG manifest
+            /_next\/static\/[^"']+\/_buildManifest\.js/g,
+            /_next\/static\/[^"']+\/_ssgManifest\.js/g
+        ];
+        
+        for (const pattern of nextJsPatterns) {
+            let jsMatch;
+            while ((jsMatch = pattern.exec(pageHtml)) !== null) {
+                const jsPath = jsMatch[0];
+                const fullJsUrl = BASE_URL + '/' + jsPath.replace(/^\//, '');
+                resources.push(fullJsUrl);
+            }
+        }
+        
+        // Extract SVG files from mask-image in the raw HTML (to handle &quot; entity encoding)
+        const maskImagePattern = /mask-image:\s*url\(&quot;([^&]+)&quot;\)/g;
+        let svgMatch;
+        while ((svgMatch = maskImagePattern.exec(pageHtml)) !== null) {
+            const svgUrl = svgMatch[1];
+            if (svgUrl && svgUrl.toLowerCase().endsWith('.svg')) {
+                resources.push(svgUrl);
+            }
         }
         
         // Add resources from intercepted requests
@@ -644,7 +775,7 @@ async function processPage(page, urlPath, processedPaths, pathsToProcess, collec
             collectedData.allNavigationPaths.add(link.path);
         });
         
-            } catch (error) {
+    } catch (error) {
         console.error(`Error processing ${fullUrl}:`, error.message);
         console.error(error.stack);
         
@@ -734,7 +865,7 @@ async function downloadAllResources(collectedData) {
                 failed++;
             }
             
-            completed++;
+                            completed++;
             if (completed % 10 === 0 || completed === uniqueResources.length) {
                 console.log(`Downloaded ${completed}/${uniqueResources.length} resources (${succeeded} succeeded, ${failed} failed)`);
             }
@@ -749,6 +880,703 @@ async function downloadAllResources(collectedData) {
     
     console.log("\n--- Resource download phase complete ---\n");
     return { succeeded, failed };
+}
+
+/**
+ * Process HTML files to replace all resource URLs with local paths
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function processHtmlFiles(collectedData) {
+    console.log("\n--- Starting HTML processing phase ---\n");
+    
+    // Create a mapping of remote URLs to local file paths for all resources
+    const resourceUrlMap = new Map();
+    
+    // Build the mapping from all pages for all resource types
+    for (const page of collectedData.pages) {
+        for (const resourceType of ['css', 'js', 'images', 'fonts', 'other']) {
+            for (const resource of page.resources[resourceType]) {
+                if (resource.downloaded && resource.localPath) {
+                    resourceUrlMap.set(resource.url, resource.localPath);
+                    
+                    // Also add relative URL paths
+                    const relativeUrl = resource.url.replace(BASE_URL, '');
+                    if (relativeUrl.startsWith('/')) {
+                        resourceUrlMap.set(relativeUrl, resource.localPath);
+                    }
+                }
+            }
+        }
+    }
+    
+    console.log(`Found ${resourceUrlMap.size} resources to replace in HTML files`);
+    
+    // Process each HTML file
+    for (const page of collectedData.pages) {
+        if (!page.htmlFile) continue;
+        
+        const htmlFilePath = path.join(OUTPUT_DIR, page.htmlFile);
+        console.log(`Processing HTML file: ${htmlFilePath}`);
+        
+        try {
+            // Read the HTML file
+            let htmlContent = await fs.readFile(htmlFilePath, 'utf8');
+            let replacementCounts = {
+                css: 0,
+                js: 0,
+                images: 0,
+                fonts: 0,
+                other: 0,
+                svgToImg: 0
+            };
+            
+            // First, handle SVG elements containing mintlify in style attribute or mask-image URLs
+            // Find and replace all SVG elements with mask-image properties
+            // This approach looks for any SVG with style containing mask-image regardless of URL format
+            const svgRegex = /<svg[^>]*style=["']([^"']*mask-image[^"']*)["'][^>]*>[\s\S]*?<\/svg>/gi;
+            let svgMatch;
+            
+            // Store all replacements to apply at once
+            const svgReplacements = [];
+            
+            // // First pass - identify all SVGs with mask-image
+            // while ((svgMatch = svgRegex.exec(htmlContent)) !== null) {
+            //     const fullSvgElement = svgMatch[0];
+            //     const stylesAttribute = svgMatch[1];
+                
+            //     // Check if it contains mintlify in the mask-image URL
+            //     if (stylesAttribute.includes('mintlify')) {
+            //         // Extract all attributes from the SVG element
+            //         const classMatch = /class=["']([^"']*)["']/i.exec(fullSvgElement);
+            //         const classAttr = classMatch ? classMatch[1] : '';
+                    
+            //         // Extract other style properties we want to keep
+            //         const stylesWithoutMask = stylesAttribute.replace(/(-webkit-)?mask-image:[^;]+;?/g, '')
+            //             .replace(/(-webkit-)?mask-repeat:[^;]+;?/g, '')
+            //             .replace(/(-webkit-)?mask-position:[^;]+;?/g, '');
+                    
+            //         // Create a direct image element instead
+            //         // Don't use the local file path - keep the original asset path
+            //         const imgElement = `<img class="${classAttr}" style="${stylesWithoutMask}" alt="" src="${extractAssetPath(stylesAttribute)}" />`;
+                    
+            //         // Add to replacements list
+            //         svgReplacements.push({
+            //             original: fullSvgElement,
+            //             replacement: imgElement
+            //         });
+            //         replacementCounts.svgToImg++;
+            //     }
+            // }
+            
+            // Helper function to extract the asset path from style attribute
+            function extractAssetPath(style) {
+                // Look for the mask-image URL pattern in the style
+                const maskMatch = /mask-image:\s*url\(['"]?(.*?)['"]?\)/i.exec(style);
+                if (maskMatch && maskMatch[1]) {
+                    return maskMatch[1];
+                }
+                // Fallback to webkit version if regular mask-image not found
+                const webkitMatch = /-webkit-mask-image:\s*url\(['"]?(.*?)['"]?\)/i.exec(style);
+                if (webkitMatch && webkitMatch[1]) {
+                    return webkitMatch[1];
+                }
+                return '';
+            }
+            
+            // Apply SVG -> IMG replacements
+            for (const replacement of svgReplacements) {
+                htmlContent = htmlContent.replace(replacement.original, replacement.replacement);
+            }
+            
+            // Replace each resource URL with its local path
+            for (const [remoteUrl, localPath] of resourceUrlMap.entries()) {
+                // Determine resource type
+                const isCSS = remoteUrl.toLowerCase().includes('.css') || categorizeResource(remoteUrl) === 'css';
+                const isJS = remoteUrl.toLowerCase().includes('.js') || categorizeResource(remoteUrl) === 'js';
+                const isImage = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'avif'].some(ext => 
+                    remoteUrl.toLowerCase().includes('.' + ext)) || categorizeResource(remoteUrl) === 'image';
+                const isFont = ['woff', 'woff2', 'ttf', 'otf', 'eot'].some(ext => 
+                    remoteUrl.toLowerCase().includes('.' + ext)) || categorizeResource(remoteUrl) === 'font';
+                
+                // Get the resource type for tracking replacements
+                let resourceType = 'other';
+                if (isCSS) resourceType = 'css';
+                else if (isJS) resourceType = 'js';
+                else if (isImage) resourceType = 'images';
+                else if (isFont) resourceType = 'fonts';
+                
+                // Create various forms of the URL to replace
+                const urlVariations = [
+                    remoteUrl,
+                    remoteUrl.replace(BASE_URL, ''),
+                    `"${remoteUrl}"`,
+                    `'${remoteUrl}'`,
+                    `"${remoteUrl.replace(BASE_URL, '')}"`,
+                    `'${remoteUrl.replace(BASE_URL, '')}'`,
+                    `&quot;${remoteUrl}&quot;`,
+                    `&quot;${remoteUrl.replace(BASE_URL, '')}&quot;`
+                ];
+                
+                // Local path should use forward slashes for URLs in HTML
+                const localUrl = localPath.replace(/\\/g, '/');
+                
+                // Replace all variations
+                for (const urlVariation of urlVariations) {
+                    if (htmlContent.includes(urlVariation)) {
+                        htmlContent = htmlContent.split(urlVariation).join(localUrl);
+                        replacementCounts[resourceType]++;
+                    }
+                }
+                
+                // Get the URL path relative to the base URL
+                const relativeUrlPath = remoteUrl.replace(BASE_URL, '');
+                
+                if (isCSS) {
+                    // CSS-specific replacements
+                    
+                    // Replace URL in special Next.js patterns for CSS
+                    const cssNextJsPattern = new RegExp(`(href|data-href|data-n-href)=["']${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                    htmlContent = htmlContent.replace(cssNextJsPattern, `$1="${localUrl}"`);
+                    
+                    // Handle preload links for CSS
+                    const cssPreloadPattern = new RegExp(`<link rel="preload" href="${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}" as="style">`, 'g');
+                    htmlContent = htmlContent.replace(cssPreloadPattern, `<link rel="preload" href="${localUrl}" as="style">`);
+                    
+                    if (relativeUrlPath.startsWith('/')) {
+                        // Handle relative URLs in Next.js patterns for CSS
+                        const relativeCssNextJsPattern = new RegExp(`(href|data-href|data-n-href)=["']${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                        htmlContent = htmlContent.replace(relativeCssNextJsPattern, `$1="${localUrl}"`);
+                        
+                        const relativeCssPreloadPattern = new RegExp(`<link rel="preload" href="${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}" as="style">`, 'g');
+                        htmlContent = htmlContent.replace(relativeCssPreloadPattern, `<link rel="preload" href="${localUrl}" as="style">`);
+                        
+                        // Handle the specific pattern for CSS
+                        const nextJsCssPattern = new RegExp(`href="${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}" as="style"`, 'g');
+                        htmlContent = htmlContent.replace(nextJsCssPattern, `href="${localUrl}" as="style"`);
+                        
+                        // Handle style data-n-href attribute
+                        const styleDataHrefPattern = new RegExp(`data-n-href="${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}"`, 'g');
+                        htmlContent = htmlContent.replace(styleDataHrefPattern, `data-n-href="${localUrl}"`);
+                        
+                        // Handle noscript content for CSS
+                        const noscriptPattern = new RegExp(`<noscript[^>]*><link[^>]*href="${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}"[^>]*></noscript>`, 'g');
+                        htmlContent = htmlContent.replace(noscriptPattern, (match) => {
+                            return match.replace(relativeUrlPath, localUrl);
+                        });
+                    }
+                }
+                
+                if (isJS) {
+                    // JS-specific replacements
+                    
+                    // Replace URL in script src attributes
+                    const jsScriptPattern = new RegExp(`src=["']${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                    htmlContent = htmlContent.replace(jsScriptPattern, `src="${localUrl}"`);
+                    
+                    // Handle preload links for JS
+                    const jsPreloadPattern = new RegExp(`<link rel="preload" href="${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}" as="script">`, 'g');
+                    htmlContent = htmlContent.replace(jsPreloadPattern, `<link rel="preload" href="${localUrl}" as="script">`);
+                    
+                    if (relativeUrlPath.startsWith('/')) {
+                        // Handle relative URLs in script tags
+                        const relativeJsScriptPattern = new RegExp(`src=["']${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                        htmlContent = htmlContent.replace(relativeJsScriptPattern, `src="${localUrl}"`);
+                        
+                        // Handle relative preload links for JS
+                        const relativeJsPreloadPattern = new RegExp(`<link rel="preload" href="${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}" as="script">`, 'g');
+                        htmlContent = htmlContent.replace(relativeJsPreloadPattern, `<link rel="preload" href="${localUrl}" as="script">`);
+                    }
+                }
+                
+                if (isImage) {
+                    // Image-specific replacements
+                    
+                    // Replace in img src attributes
+                    const imgSrcPattern = new RegExp(`src=["']${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                    htmlContent = htmlContent.replace(imgSrcPattern, `src="${localUrl}"`);
+                    
+                    // Replace in srcset attributes
+                    const srcsetPattern = new RegExp(`srcset=["'][^"']*${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}[^"']*["']`, 'g');
+                    if (srcsetPattern.test(htmlContent)) {
+                        htmlContent = htmlContent.replace(srcsetPattern, (match) => {
+                            return match.replace(remoteUrl, localUrl);
+                        });
+                    }
+                    
+                    // Replace in meta image tags
+                    const metaPattern = new RegExp(`content=["']${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                    htmlContent = htmlContent.replace(metaPattern, `content="${localUrl}"`);
+                    
+                    // Replace in inline style background-image
+                    const inlineStylePattern = new RegExp(`background-image:\\s*url\\(['"]?${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}['"]?\\)`, 'g');
+                    htmlContent = htmlContent.replace(inlineStylePattern, `background-image: url('${localUrl}')`);
+                    
+                    if (relativeUrlPath.startsWith('/')) {
+                        // Handle relative URLs in image tags
+                        const relativeImgSrcPattern = new RegExp(`src=["']${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                        htmlContent = htmlContent.replace(relativeImgSrcPattern, `src="${localUrl}"`);
+                        
+                        // Handle relative URLs in srcset
+                        const relativeSrcsetPattern = new RegExp(`srcset=["'][^"']*${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}[^"']*["']`, 'g');
+                        if (relativeSrcsetPattern.test(htmlContent)) {
+                            htmlContent = htmlContent.replace(relativeSrcsetPattern, (match) => {
+                                return match.replace(relativeUrlPath, localUrl);
+                            });
+                        }
+                        
+                        // Handle relative URLs in meta tags
+                        const relativeMetaPattern = new RegExp(`content=["']${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                        htmlContent = htmlContent.replace(relativeMetaPattern, `content="${localUrl}"`);
+                        
+                        // Handle relative URLs in inline styles
+                        const relativeInlineStylePattern = new RegExp(`background-image:\\s*url\\(['"]?${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}['"]?\\)`, 'g');
+                        htmlContent = htmlContent.replace(relativeInlineStylePattern, `background-image: url('${localUrl}')`);
+                    }
+                }
+                
+                if (isFont) {
+                    // Font-specific replacements
+                    
+                    // Replace in @font-face declarations that might be inline
+                    const fontFacePattern = new RegExp(`src:\\s*url\\(['"]?${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}['"]?\\)`, 'g');
+                    htmlContent = htmlContent.replace(fontFacePattern, `src: url('${localUrl}')`);
+                    
+                    if (relativeUrlPath.startsWith('/')) {
+                        // Handle relative URLs in font-face
+                        const relativeFontFacePattern = new RegExp(`src:\\s*url\\(['"]?${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}['"]?\\)`, 'g');
+                        htmlContent = htmlContent.replace(relativeFontFacePattern, `src: url('${localUrl}')`);
+                    }
+                }
+                
+                // Handle any other type of resource
+                if (resourceType === 'other') {
+                    // Generic replacements for other resource types
+                    
+                    // Handle object data attributes
+                    const objectPattern = new RegExp(`data=["']${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                    htmlContent = htmlContent.replace(objectPattern, `data="${localUrl}"`);
+                    
+                    // Handle embed src attributes
+                    const embedPattern = new RegExp(`src=["']${remoteUrl.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                    htmlContent = htmlContent.replace(embedPattern, `src="${localUrl}"`);
+                    
+                    if (relativeUrlPath.startsWith('/')) {
+                        // Handle relative URLs for other resources
+                        const relativeObjectPattern = new RegExp(`data=["']${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                        htmlContent = htmlContent.replace(relativeObjectPattern, `data="${localUrl}"`);
+                        
+                        const relativeEmbedPattern = new RegExp(`src=["']${relativeUrlPath.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'g');
+                        htmlContent = htmlContent.replace(relativeEmbedPattern, `src="${localUrl}"`);
+                    }
+                }
+            }
+            
+            // Save the modified HTML file
+            await fs.writeFile(htmlFilePath, htmlContent);
+            console.log(`Replaced resources in ${htmlFilePath}: CSS (${replacementCounts.css}), JS (${replacementCounts.js}), Images (${replacementCounts.images}), Fonts (${replacementCounts.fonts}), Other (${replacementCounts.other}), SVG→IMG (${replacementCounts.svgToImg})`);
+            
+            // Update the page data to indicate it was processed
+            page.htmlProcessed = true;
+            page.replacementCounts = replacementCounts;
+            
+        } catch (error) {
+            console.error(`Error processing HTML file ${htmlFilePath}: ${error.message}`);
+            page.htmlProcessingError = error.message;
+        }
+    }
+    
+    console.log("\n--- HTML processing phase complete ---\n");
+}
+
+/**
+ * Process CSS files to replace @import URLs with local paths
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function processCssFiles(collectedData) {
+    console.log("\n--- Starting CSS processing phase ---\n");
+    
+    // Create a mapping of remote URLs to local file paths for all CSS resources
+    const cssUrlMap = new Map();
+    
+    // Build the mapping from all pages
+    for (const page of collectedData.pages) {
+        for (const resource of page.resources.css) {
+            if (resource.downloaded && resource.localPath) {
+                cssUrlMap.set(resource.url, resource.localPath);
+                
+                // Also add relative URL paths
+                const relativeUrl = resource.url.replace(BASE_URL, '');
+                if (relativeUrl.startsWith('/')) {
+                    cssUrlMap.set(relativeUrl, resource.localPath);
+                }
+            }
+        }
+    }
+    
+    console.log(`Processing ${cssUrlMap.size} CSS files for @import statements`);
+    
+    // Process each CSS file
+    let processedCount = 0;
+    
+    for (const [remoteUrl, localPath] of cssUrlMap.entries()) {
+        const cssFilePath = path.join(OUTPUT_DIR, localPath);
+        
+        try {
+            // Skip if the file doesn't exist or if it's not a full URL (to avoid duplicates)
+            if (!remoteUrl.startsWith('http') || !(await fs.access(cssFilePath).then(() => true).catch(() => false))) {
+                continue;
+            }
+            
+            // Read the CSS file
+            let cssContent = await fs.readFile(cssFilePath, 'utf8');
+            let replacementsMade = 0;
+            
+            // Find all @import statements
+            const importRegex = /@import\s+(?:url\(['"]?(.*?)['"]?\)|['"]([^'"]+)['"]);/g;
+            
+            // Process each @import statement
+            let match;
+            while ((match = importRegex.exec(cssContent)) !== null) {
+                const importUrl = match[1] || match[2];
+                if (!importUrl) continue;
+                
+                // Resolve relative URLs
+                let fullImportUrl;
+                if (importUrl.startsWith('http')) {
+                    fullImportUrl = importUrl;
+                } else if (importUrl.startsWith('/')) {
+                    fullImportUrl = BASE_URL + importUrl;
+                } else {
+                    // Relative to the CSS file
+                    const baseUrlObj = new URL(remoteUrl);
+                    const basePath = baseUrlObj.pathname.substring(0, baseUrlObj.pathname.lastIndexOf('/') + 1);
+                    fullImportUrl = `${baseUrlObj.origin}${basePath}${importUrl}`;
+                }
+                
+                // Check if we have a local version of this imported CSS
+                const localImportPath = cssUrlMap.get(fullImportUrl);
+                if (localImportPath) {
+                    // Replace with local path (using forward slashes for URLs)
+                    const localImportUrl = localImportPath.replace(/\\/g, '/');
+                    
+                    // Create replacement pattern based on the original match
+                    let replacement;
+                    if (match[1]) { // url() pattern
+                        replacement = `@import url('${localImportUrl}');`;
+                    } else { // direct string pattern
+                        replacement = `@import '${localImportUrl}';`;
+                    }
+                    
+                    // Replace this specific @import
+                    cssContent = cssContent.replace(match[0], replacement);
+                    replacementsMade++;
+                }
+            }
+            
+            // Replace url() references in the CSS - for images, fonts, etc.
+            const urlRegex = /url\(['"]?([^'")]+)['"]?\)/g;
+            while ((match = urlRegex.exec(cssContent)) !== null) {
+                const urlPath = match[1];
+                if (!urlPath || urlPath.startsWith('data:')) continue;
+                
+                // Resolve the URL
+                let fullUrl;
+                if (urlPath.startsWith('http')) {
+                    fullUrl = urlPath;
+                } else if (urlPath.startsWith('/')) {
+                    fullUrl = BASE_URL + urlPath;
+                } else {
+                    // Relative to the CSS file
+                    const baseUrlObj = new URL(remoteUrl);
+                    const basePath = baseUrlObj.pathname.substring(0, baseUrlObj.pathname.lastIndexOf('/') + 1);
+                    fullUrl = `${baseUrlObj.origin}${basePath}${urlPath}`;
+                }
+                
+                // Check for local resources across all resource types
+                let localResourcePath = null;
+                for (const page of collectedData.pages) {
+                    for (const resourceType of ['images', 'fonts', 'other']) {
+                        const resource = page.resources[resourceType].find(r => r.url === fullUrl && r.downloaded);
+                        if (resource && resource.localPath) {
+                            localResourcePath = resource.localPath;
+                            break;
+                        }
+                    }
+                    if (localResourcePath) break;
+                }
+                
+                // Replace with local path if found
+                if (localResourcePath) {
+                    const localUrl = localResourcePath.replace(/\\/g, '/');
+                    const replacement = `url('${localUrl}')`;
+                    cssContent = cssContent.replace(match[0], replacement);
+                        replacementsMade++;
+                }
+            }
+            
+            // Save the file if changes were made
+            if (replacementsMade > 0) {
+                await fs.writeFile(cssFilePath, cssContent);
+                console.log(`Replaced ${replacementsMade} URLs in CSS file: ${cssFilePath}`);
+                processedCount++;
+            }
+            
+        } catch (error) {
+            console.error(`Error processing CSS file ${cssFilePath}: ${error.message}`);
+        }
+    }
+    
+    console.log(`\nProcessed ${processedCount} CSS files with URL replacements`);
+    console.log("\n--- CSS processing phase complete ---\n");
+}
+
+/**
+ * Process JS files to replace URLs with local paths
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function processJsFiles(collectedData) {
+    console.log("\n--- Starting JS processing phase ---\n");
+    
+    // Create a mapping of remote URLs to local file paths for all resources
+    const resourceUrlMap = new Map();
+    
+    // Build the mapping from all pages for all resource types
+    for (const page of collectedData.pages) {
+        for (const resourceType of ['js', 'css', 'images', 'fonts', 'other']) {
+            for (const resource of page.resources[resourceType]) {
+                if (resource.downloaded && resource.localPath) {
+                    resourceUrlMap.set(resource.url, resource.localPath);
+                    
+                    // Also add relative URL paths
+                    const relativeUrl = resource.url.replace(BASE_URL, '');
+                    if (relativeUrl.startsWith('/')) {
+                        resourceUrlMap.set(relativeUrl, resource.localPath);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Create a mapping specifically for JS files
+    const jsUrlMap = new Map();
+    for (const [url, localPath] of resourceUrlMap.entries()) {
+        if (url.toLowerCase().includes('.js') || categorizeResource(url) === 'js') {
+            jsUrlMap.set(url, localPath);
+        }
+    }
+    
+    console.log(`Processing ${jsUrlMap.size} JS files for URL references`);
+    
+    // Process each JS file
+    let processedCount = 0;
+    
+    for (const [remoteUrl, localPath] of jsUrlMap.entries()) {
+        const jsFilePath = path.join(OUTPUT_DIR, localPath);
+        
+        try {
+            // Skip if the file doesn't exist or if it's not a full URL (to avoid duplicates)
+            if (!remoteUrl.startsWith('http') || !(await fs.access(jsFilePath).then(() => true).catch(() => false))) {
+                continue;
+            }
+            
+            // Read the JS file
+            let jsContent = await fs.readFile(jsFilePath, 'utf8');
+            let replacementsMade = 0;
+            
+            // Look for various URL patterns in the JS files
+            
+            // 1. Dynamic import() calls
+            const importRegex = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+            let match;
+            while ((match = importRegex.exec(jsContent)) !== null) {
+                const importPath = match[1];
+                
+                // Resolve relative URLs
+                let fullImportUrl;
+                if (importPath.startsWith('http')) {
+                    fullImportUrl = importPath;
+                } else if (importPath.startsWith('/')) {
+                    fullImportUrl = BASE_URL + importPath;
+                    } else {
+                    // Relative to the JS file
+                    const baseUrlObj = new URL(remoteUrl);
+                    const basePath = baseUrlObj.pathname.substring(0, baseUrlObj.pathname.lastIndexOf('/') + 1);
+                    fullImportUrl = `${baseUrlObj.origin}${basePath}${importPath}`;
+                }
+                
+                // Check if we have a local version of this resource
+                let localImportPath = resourceUrlMap.get(fullImportUrl);
+                
+                // If not found, try adding .js extension
+                if (!localImportPath && !fullImportUrl.endsWith('.js')) {
+                    localImportPath = resourceUrlMap.get(fullImportUrl + '.js');
+                }
+                
+                // Replace with local path if found
+                if (localImportPath) {
+                    const localImportUrl = localImportPath.replace(/\\/g, '/');
+                    jsContent = jsContent.replace(
+                        `import("${importPath}")`, 
+                        `import("./${localImportUrl}")`
+                    );
+                    replacementsMade++;
+                }
+            }
+            
+            // 2. URL references in strings
+            const urlPatterns = [
+                // Direct URL references
+                /(["'])(\/_next\/static\/[^'"]+)(["'])/g,
+                // Full URL references
+                new RegExp(`(["'])(${BASE_URL.replace(/[-\\/\\^$*+?.()|[\]{}]/g, '\\$&')}[^'"]+)(["'])`, 'g')
+            ];
+            
+            for (const pattern of urlPatterns) {
+                while ((match = pattern.exec(jsContent)) !== null) {
+                    const urlPath = match[2];
+                    let fullUrl = urlPath;
+                    
+                    // If it's a relative path, convert to full URL
+                    if (urlPath.startsWith('/')) {
+                        fullUrl = BASE_URL + urlPath;
+                    }
+                    
+                    // Check for a local version
+                    const localResourcePath = resourceUrlMap.get(fullUrl);
+                    if (localResourcePath) {
+                        const localUrl = localResourcePath.replace(/\\/g, '/');
+                        const replacement = `${match[1]}${localUrl}${match[3]}`;
+                        jsContent = jsContent.replace(match[0], replacement);
+                        replacementsMade++;
+                    }
+                }
+            }
+            
+            // 3. Replace chunk loading paths specific to Next.js
+            const chunkLoaderRegex = /path:\s*["'](\/[^'"]+)["']/g;
+            while ((match = chunkLoaderRegex.exec(jsContent)) !== null) {
+                const urlPath = match[1];
+                const fullUrl = BASE_URL + urlPath;
+                
+                // Check for a local version
+                const localResourcePath = resourceUrlMap.get(fullUrl);
+                if (localResourcePath) {
+                    const localUrl = localResourcePath.replace(/\\/g, '/');
+                    jsContent = jsContent.replace(
+                        `path:"${urlPath}"`, 
+                        `path:"${localUrl}"`
+                    );
+                    replacementsMade++;
+                }
+            }
+            
+            // Save the file if changes were made
+            if (replacementsMade > 0) {
+                await fs.writeFile(jsFilePath, jsContent);
+                console.log(`Replaced ${replacementsMade} URLs in JS file: ${jsFilePath}`);
+                processedCount++;
+            }
+            
+        } catch (error) {
+            console.error(`Error processing JS file ${jsFilePath}: ${error.message}`);
+        }
+    }
+    
+    console.log(`\nProcessed ${processedCount} JS files with URL replacements`);
+    console.log("\n--- JS processing phase complete ---\n");
+}
+
+/**
+ * Process JS files to handle specific edge cases and patterns
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function processJsFileEdgeCases(collectedData) {
+    console.log("\n--- Starting JS edge case processing phase ---\n");
+    
+    // Create a mapping specifically for JS files
+    const jsResources = [];
+    
+    // Collect all JS resources
+    for (const page of collectedData.pages) {
+        for (const resource of page.resources.js) {
+            if (resource.downloaded && resource.localPath) {
+                jsResources.push(resource);
+            }
+        }
+    }
+    
+    console.log(`Processing ${jsResources.length} JS files for specific string replacements`);
+    
+    // Process each JS file
+    let processedCount = 0;
+    
+    for (const resource of jsResources) {
+        const jsFilePath = path.join(OUTPUT_DIR, resource.localPath);
+        
+        try {
+            // Skip if the file doesn't exist
+            if (!(await fs.access(jsFilePath).then(() => true).catch(() => false))) {
+                continue;
+            }
+            
+            // Read the JS file
+            let jsContent = await fs.readFile(jsFilePath, 'utf8');
+            let replacementsMade = 0;
+            
+            // 1. Replace "pdf"===d with "pdf"==="pdf"
+            const pdfCheck = /"pdf"===d/g;
+            const pdfReplacements = (jsContent.match(pdfCheck) || []).length;
+            if (pdfReplacements > 0) {
+                jsContent = jsContent.replace(pdfCheck, '"pdf"==="pdf"');
+                replacementsMade += pdfReplacements;
+            }
+            
+            // 2. Replace Mintlify CDN URLs with local paths
+            const replacements = [
+                {
+                    pattern: /https:\/\/mintlify\.b-cdn\.net\/v6\.6\.0\/lucide\/\$\{t\}\.svg/g,
+                    replacement: "assets/${t}.svg"
+                },
+                {
+                    pattern: /https:\/\/mintlify\.b-cdn\.net\/v6\.6\.0\/\$\{r\?\?\"regular\"\}\/\$\{t\}/g,
+                    replacement: "assets/${t}"
+                },
+                {
+                    pattern: /https:\/\/mintlify\.b-cdn\.net\/v6\.6\.0\/brands\/\$\{t\}\.svg/g,
+                    replacement: "assets/${t}.svg"
+                },
+                {
+                    pattern: /backgroundColor:"transparent"/g,
+                    replacement: 'backgroundColor:\"white\",borderRadius:3,padding:"1px"'
+                }
+            ];
+            
+            for (const { pattern, replacement } of replacements) {
+                const count = (jsContent.match(pattern) || []).length;
+                if (count > 0) {
+                    jsContent = jsContent.replace(pattern, replacement);
+                    replacementsMade += count;
+                }
+            }
+            
+            // Save the file if changes were made
+            if (replacementsMade > 0) {
+                await fs.writeFile(jsFilePath, jsContent);
+                console.log(`Applied ${replacementsMade} edge case replacements in JS file: ${jsFilePath}`);
+                processedCount++;
+            }
+            
+        } catch (error) {
+            console.error(`Error processing JS file edge cases in ${jsFilePath}: ${error.message}`);
+        }
+    }
+    
+    console.log(`\nProcessed ${processedCount} JS files with edge case replacements`);
+    console.log("\n--- JS edge case processing phase complete ---\n");
 }
 
 // Main execution function
@@ -852,7 +1680,19 @@ async function main() {
     // Phase 2: Download all resources
     const { succeeded, failed } = await downloadAllResources(collectedData);
     
-    // Phase 3: Save the final data
+    // Phase 3: Process HTML files
+    await processHtmlFiles(collectedData);
+    
+    // Phase 4: Process CSS files
+    await processCssFiles(collectedData);
+    
+    // Phase 5: Process JS files
+    await processJsFiles(collectedData);
+    
+    // Phase 6: Process JS edge cases
+    await processJsFileEdgeCases(collectedData);
+    
+    // Phase 7: Save the final data
     const outputFile = path.join(OUTPUT_DIR, 'collected-data.json');
     await fs.writeFile(outputFile, JSON.stringify(collectedData, null, 2));
     console.log(`Saved collected data to ${outputFile}`);
