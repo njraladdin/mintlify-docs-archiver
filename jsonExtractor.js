@@ -6,26 +6,25 @@
  * content into structured, readable JSON.
  */
 
-const fs = require('fs').promises;
+const fs = require('fs/promises');
 const path = require('path');
 
 // Debug flag - this should be imported from a config file in a real application
 const DEBUG = process.env.DEBUG === 'true';
 
 /**
- * Extract Next.js data from HTML files and save as JSON
- * @param {Object} collectedData - The data collection object with pages info
- * @param {string} outputDir - Base output directory
- * @param {string} jsonDir - Directory to save JSON files
+ * Extracts Next.js data from HTML files
+ * @param {Object} collectedData - The data collected from all pages
+ * @param {string} outputDir - The base output directory
+ * @param {string} jsonDir - The directory to save JSON files
  * @returns {Promise<void>}
  */
 async function extractNextJsData(collectedData, outputDir, jsonDir) {
     console.log("\n--- Starting Next.js data extraction phase ---\n");
     
-    // Process each HTML file
-    let processedFileCount = 0;
-    let extractedDataCount = 0;
+    let extractedCount = 0;
     
+    // Process each HTML file to extract the Next.js data
     for (const page of collectedData.pages) {
         if (!page.htmlFile) continue;
         
@@ -33,84 +32,42 @@ async function extractNextJsData(collectedData, outputDir, jsonDir) {
         
         try {
             // Read the HTML file
-            let htmlContent = await fs.readFile(htmlFilePath, 'utf8');
+            const htmlContent = await fs.readFile(htmlFilePath, 'utf8');
             
-            // Check for __NEXT_DATA__ script tag with various formats
-            // Some sites might have different attribute ordering or whitespace
-            const nextDataRegex = /<script[^>]*id=["']?__NEXT_DATA__["']?[^>]*>([\s\S]*?)<\/script>/i;
-            const match = nextDataRegex.exec(htmlContent);
+            // Find the __NEXT_DATA__ script which contains JSON data
+            const nextDataMatch = htmlContent.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
             
-            if (match && match[1]) {
+            if (nextDataMatch && nextDataMatch[1]) {
                 try {
-                    // Clean the JSON string (trim whitespace)
-                    const jsonString = match[1].trim();
+                    // Parse the JSON
+                    const jsonData = JSON.parse(nextDataMatch[1]);
                     
-                    // Parse the JSON to validate it
-                    const fullJsonData = JSON.parse(jsonString);
+                    // Create a filename based on the page path
+                    const jsonFilename = page.path === '/' 
+                        ? 'index.json' 
+                        : (page.path.replace(/^\//, '').replace(/\//g, '-') + '.json');
                     
-                    // Create filename based on HTML filename
-                    const htmlFileName = path.basename(page.htmlFile);
-                    const jsonFileName = htmlFileName.replace(/\.html$/, '.json');
-                    const jsonFilePath = path.join(jsonDir, jsonFileName);
+                    // Save the JSON to the json directory
+                    const jsonFilePath = path.join(jsonDir, jsonFilename);
+                    await fs.writeFile(jsonFilePath, JSON.stringify(jsonData, null, 2));
                     
-                    // Try to extract compiledSource directly
-                    let compiledSource = null;
+                    // Add the json file path to the page data
+                    page.nextJsDataFile = path.relative(outputDir, jsonFilePath);
                     
-                    // First check in mdxSource
-                    if (fullJsonData?.props?.pageProps?.mdxSource?.compiledSource) {
-                        compiledSource = fullJsonData.props.pageProps.mdxSource.compiledSource;
-                    } 
-                    // If not found, check if it's directly in pageProps
-                    else if (fullJsonData?.props?.pageProps?.compiledSource) {
-                        compiledSource = fullJsonData.props.pageProps.compiledSource;
-                    }
-                    // Check if it's in description
-                    else if (fullJsonData?.props?.pageProps?.description?.compiledSource) {
-                        compiledSource = fullJsonData.props.pageProps.description.compiledSource;
-                    }
-                    
-                    // If compiledSource was found, save it
-                    if (compiledSource) {
-                        // Clean up the compiledSource to make it more readable
-                        // Replace escaped quotes and newlines
-                        compiledSource = compiledSource
-                            .replace(/\\"/g, '"')  // Replace escaped quotes
-                            .replace(/\\n/g, '\n') // Replace escaped newlines with actual newlines
-                            .replace(/\\t/g, '  '); // Replace tabs with spaces
-                        
-                        // Parse the compiledSource content
-                        // Extract key content elements
-                        const parsedContent = parseCompiledSource(compiledSource, page.url);
-                        
-                        // Save as formatted JSON
-                        await fs.writeFile(jsonFilePath, JSON.stringify(parsedContent, null, 2));
-                        
-                        console.log(`Extracted and parsed compiledSource from ${htmlFilePath} to ${jsonFilePath}`);
-                        extractedDataCount++;
-                        
-                        // Add the JSON file path to the page data
-                        page.nextJsDataFile = path.relative(outputDir, jsonFilePath);
-                    } else {
-                        if (DEBUG) console.log(`No compiledSource found in ${htmlFilePath}`);
-                    }
+                    console.log(`Extracted Next.js data from ${page.htmlFile} to ${jsonFilename}`);
+                    extractedCount++;
                 } catch (parseError) {
-                    console.error(`Error parsing Next.js data in ${htmlFilePath}: ${parseError.message}`);
+                    console.error(`Error parsing Next.js data in ${page.htmlFile}: ${parseError.message}`);
                 }
-            } else {
-                if (DEBUG) console.log(`No Next.js data found in ${htmlFilePath}`);
             }
-            
-            processedFileCount++;
-            
         } catch (error) {
-            console.error(`Error processing file ${htmlFilePath} for Next.js data: ${error.message}`);
+            console.error(`Error processing ${page.htmlFile} for Next.js data: ${error.message}`);
         }
     }
     
-    // Update stats
-    collectedData.stats.extractedNextJsData = extractedDataCount;
+    console.log(`\nExtracted Next.js data from ${extractedCount} pages`);
+    collectedData.stats.extractedNextJsData = extractedCount;
     
-    console.log(`\nProcessed ${processedFileCount} HTML files, extracted compiledSource from ${extractedDataCount} files`);
     console.log("\n--- Next.js data extraction phase complete ---\n");
 }
 

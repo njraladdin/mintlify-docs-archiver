@@ -5,7 +5,7 @@ const axios = require('axios');
 const { URL } = require('url');
 
 // Import the JSON extractor module
-const jsonExtractor = require('./jsonExtractor');
+const jsonExtractor = require('../jsonExtractor');
 
 // --- Configuration ---
 const BASE_URL = 'https://docs.lovable.dev';
