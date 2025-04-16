@@ -52,7 +52,7 @@ console.log(`Max pages: ${maxPages === -1 ? 'Unlimited' : maxPages}`);
 console.log('\n');
 
 // Run the scraper
-runScraper(domain, maxPages).catch(error => {
+runScraper({domain, maxPages}).catch(error => {
   console.error('Error running scraper:', error);
   process.exit(1);
 });
