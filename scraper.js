@@ -7,7 +7,7 @@ const url = require('url');
 const jsonExtractor = require('./jsonExtractor');
 
 // Function to run the scraper with a specified domain
-async function runScraper({domain = 'docs.lovable.dev', maxPages = 5}) {
+async function runScraper({domain = 'docs.cursor.com', maxPages = 5}) {
     // Configure URL and domains based on input
     const BASE_URL = `https://${domain}`;
     
@@ -1957,6 +1957,6 @@ module.exports = {
 };
 
 if(require.main === module) {
-    
-    runScraper({baseUrl: 'https://docs.lovable.dev', maxPages: 3});
+    // Update the example URL to docs.cursor.com
+    runScraper({baseUrl: 'https://docs.cursor.com', maxPages: 3});
 }

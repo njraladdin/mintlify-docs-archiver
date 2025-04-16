@@ -8,9 +8,9 @@ const { URL } = require('url');
 const jsonExtractor = require('./jsonExtractor');
 
 // --- Configuration ---
-const BASE_URL = 'https://docs.lovable.dev';
+const BASE_URL = 'https://docs.cursor.com';
 const ALLOWED_DOMAINS = [
-    'docs.lovable.dev',
+    'docs.cursor.com',
     'mintlify.b-cdn.net',
     'mintlify.s3.us-west-1.amazonaws.com',
     'cdn.jsdelivr.net'

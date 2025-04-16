@@ -1,7 +1,7 @@
 {
-  "name": "lovable-docs-archiver",
+  "name": "mintlify-docs-archiver",
   "version": "1.0.0",
-  "description": "Downloads and archives the Lovable docs website for offline viewing",
+  "description": "Downloads and archives Mintlify-powered documentation websites for offline viewing",
   "main": "scrape_puppeteer.js",
   "scripts": {
     "start": "node scrape_puppeteer.js",

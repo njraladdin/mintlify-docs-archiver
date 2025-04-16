@@ -5,7 +5,7 @@ const axios = require('axios');
 const { URL } = require('url');
 
 // --- Configuration ---
-const BASE_URL = 'https://docs.lovable.dev';
+const BASE_URL = 'https://docs.cursor.com';
 const OUTPUT_DIR = 'output-spa';
 const ASSETS_DIR = path.join(OUTPUT_DIR, 'assets');
 const CSS_DIR = path.join(OUTPUT_DIR, 'css');
@@ -593,9 +593,9 @@ async function createRouter(routeData) {
  */
 async function createStartupScripts() {
     // Create a simple README file
-    const readmeContent = `# Lovable Docs - Offline Archive
+    const readmeContent = `# Mintlify Docs - Offline Archive
 
-This is an offline archive of the Lovable documentation website.
+This is an offline archive of a Mintlify-powered documentation website.
 
 ## How to View
 
@@ -629,7 +629,7 @@ This archive preserves the original site's navigation. Click on links to navigat
 
     // Create Windows batch file
     const batchContent = `@echo off
-echo Starting local web server for Lovable Docs offline archive...
+echo Starting local web server for Mintlify Docs offline archive...
 echo.
 echo Please keep this window open while browsing the documentation.
 echo When done, close this window or press Ctrl+C to stop the server.
@@ -641,7 +641,7 @@ npx http-server . -p 8080
 
     // Create bash script
     const bashContent = `#!/bin/bash
-echo "Starting local web server for Lovable Docs offline archive..."
+echo "Starting local web server for Mintlify Docs offline archive..."
 echo ""
 echo "Please keep this window open while browsing the documentation."
 echo "When done, close this window or press Ctrl+C to stop the server."

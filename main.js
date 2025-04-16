@@ -1,21 +1,20 @@
-
 /**
- * Lovable Docs Archiver - Main Entry Point
+ * Mintlify Docs Archiver - Main Entry Point
  * 
- * This script serves as the entry point for the Lovable Docs Archiver tool.
+ * This script serves as the entry point for the Mintlify Docs Archiver tool.
  * It parses command-line arguments and runs the scraper with the specified domain.
  * 
  * Usage:
  *   node main.js [domain] [maxPages]
  * 
  * Examples:
- *   node main.js                        (uses default domain: docs.lovable.dev)
- *   node main.js docs.lovable.dev
- *   node main.js docs.lovable.dev 10
- *   node main.js docs.lovable.dev -1    (unlimited pages)
+ *   node main.js                        (uses default domain: docs.cursor.com)
+ *   node main.js docs.cursor.com
+ *   node main.js docs.cursor.com 10
+ *   node main.js docs.cursor.com -1    (unlimited pages)
  * 
  * Arguments:
- *   domain           - The main domain to archive (default: docs.lovable.dev)
+ *   domain           - The main domain to archive (default: docs.cursor.com)
  *   maxPages         - Maximum number of pages to process (default: 5, use -1 for unlimited)
  */
 
@@ -25,7 +24,7 @@ const { runScraper } = require('./scraper');
 const args = process.argv.slice(2);
 
 // Extract arguments with default for domain
-const domain = args.length > 0 ? args[0] : 'docs.lovable.dev';
+const domain = args.length > 0 ? args[0] : 'docs.cursor.com';
 const maxPages = args.length > 1 ? parseInt(args[1], 10) : -1;
 
 // Validate domain
@@ -42,7 +41,7 @@ if (isNaN(maxPages) && args.length > 1) {
 
 console.log(`
 ╭───────────────────────────────╮
-│  Lovable Docs Archiver        │
+│  Mintlify Docs Archiver       │
 │  Starting archive process     │
 ╰───────────────────────────────╯
 `);
