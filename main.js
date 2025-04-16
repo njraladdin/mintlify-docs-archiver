@@ -8,13 +8,13 @@
  *   node main.js [domain] [maxPages]
  * 
  * Examples:
- *   node main.js                        (uses default domain: docs.cursor.com)
- *   node main.js docs.cursor.com
- *   node main.js docs.cursor.com 10
- *   node main.js docs.cursor.com -1    (unlimited pages)
+ *   node main.js                        (uses default domain: docs.xxxx.com)
+ *   node main.js docs.xxxx.com
+ *   node main.js docs.xxxx.com 10
+ *   node main.js docs.xxxx.com -1    (unlimited pages)
  * 
  * Arguments:
- *   domain           - The main domain to archive (default: docs.cursor.com)
+ *   domain           - The main domain to archive (default: docs.xxxx.com)
  *   maxPages         - Maximum number of pages to process (default: 5, use -1 for unlimited)
  */
 
@@ -24,8 +24,8 @@ const { runScraper } = require('./scraper');
 const args = process.argv.slice(2);
 
 // Extract arguments with default for domain
-const domain = args.length > 0 ? args[0] : 'docs.cursor.com';
-const maxPages = args.length > 1 ? parseInt(args[1], 10) : -1;
+const domain = args.length > 0 ? args[0] : 'docs.xxxx.com'; // default domain
+const maxPages = args.length > 1 ? parseInt(args[1], 10) : -1; // default max pages
 
 // Validate domain
 if (!domain.includes('.')) {
