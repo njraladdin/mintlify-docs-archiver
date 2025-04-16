@@ -1886,6 +1886,56 @@ if %ERRORLEVEL% neq 0 (
         console.log("\n--- Preview batch file creation complete ---\n");
     }
 
+    // Function to create the preview-website.command file for macOS
+    async function createPreviewCommandFile() {
+        console.log("\n--- Creating preview-website.command file for macOS ---\n");
+        
+        // Content for the command file to start a local server on macOS
+        const commandFileContent = `#!/bin/bash
+cd "$(dirname "$0")"
+
+echo "Starting local server for viewing the archived website..."
+echo
+echo "This will install http-server package temporarily if it's not already installed."
+echo
+
+if ! command -v npx &> /dev/null; then
+    echo "Error: npx is not installed. Make sure Node.js is installed."
+    read -p "Press Enter to exit..."
+    exit 1
+fi
+
+npx http-server . -p 8095 -o
+
+if [ $? -ne 0 ]; then
+    echo "Error: Could not start the server."
+    read -p "Press Enter to exit..."
+    exit 1
+fi
+
+read -p "Server stopped. Press Enter to close..."`;
+
+        try {
+            // Write the command file to the output directory
+            const commandFilePath = path.join(OUTPUT_DIR, 'preview-website.command');
+            fs.writeFileSync(commandFilePath, commandFileContent);
+            
+            // Make the file executable on Unix-like systems
+            try {
+                fs.chmodSync(commandFilePath, '755');
+                console.log(`Created and made executable the preview command file: ${commandFilePath}`);
+            } catch (chmodError) {
+                // If chmod fails (e.g., on Windows), just log a message
+                console.log(`Created preview command file: ${commandFilePath}`);
+                console.log('Note: You may need to make this file executable on macOS with: chmod +x preview-website.command');
+            }
+        } catch (error) {
+            console.error(`Error creating preview command file: ${error.message}`);
+        }
+        
+        console.log("\n--- Preview command file creation complete ---\n");
+    }
+
     console.log(`Starting scraper for ${BASE_URL}`);
     console.log(`Limiting to ${MAX_PAGES} pages`);
     console.log(`Output directory: ${OUTPUT_DIR}/`);
@@ -1938,13 +1988,18 @@ if %ERRORLEVEL% neq 0 (
         // Extract JSON data from Next.js HTML files
         await extractNextJsData();
         
-        // Create the preview-website.bat file in the output directory
+        // Create the preview-website.bat file for Windows
         await createPreviewBatFile();
+        
+        // Create the preview-website.command file for macOS
+        await createPreviewCommandFile();
         
         console.log(`\nScraping complete! Processed ${processed} pages.`);
         console.log(`Website saved to: ${path.resolve(OUTPUT_DIR)}`);
         console.log(`To view the site locally, run: npx http-server ${OUTPUT_DIR} -o`);
-        console.log(`Or simply double-click on the preview-website.bat file in the output folder.`);
+        console.log(`Or use one of the preview files in the output folder:`);
+        console.log(`  - On Windows: Double-click preview-website.bat`);
+        console.log(`  - On macOS: Double-click preview-website.command (you may need to make it executable first)`);
     } catch (error) {
         console.error('Error in scraper:', error);
     } finally {
@@ -1958,5 +2013,5 @@ module.exports = {
 
 if(require.main === module) {
     // Update the example URL to docs.cursor.com
-    runScraper({baseUrl: 'https://docs.cursor.com', maxPages: 3});
+    runScraper({baseUrl: 'https://docs.lovable.dev', maxPages: 3});
 }
