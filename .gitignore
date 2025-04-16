@@ -2,6 +2,7 @@ output/
 project.md
 output-spa/
 output-static/
+experiments/
 # Node.js dependencies
 node_modules/
 npm-debug.log
