@@ -426,6 +426,7 @@ async function runScraper({domain = 'docs.lovable.dev', maxPages = 5}) {
                 // Add this page to the collectedData for later JSON extraction
                 collectedData.pages.push({
                     url: pageUrl,
+                    path: new URL(pageUrl).pathname,
                     htmlFile: path.relative(OUTPUT_DIR, localPath).replace(/\\/g, '/')
                 });
                 
@@ -441,6 +442,7 @@ async function runScraper({domain = 'docs.lovable.dev', maxPages = 5}) {
                         // Add this page to the collectedData for later JSON extraction
                         collectedData.pages.push({
                             url: pageUrl,
+                            path: new URL(pageUrl).pathname,
                             htmlFile: path.relative(OUTPUT_DIR, localPath).replace(/\\/g, '/')
                         });
                         
@@ -558,8 +560,14 @@ async function runScraper({domain = 'docs.lovable.dev', maxPages = 5}) {
     async function extractNextJsData() {
         console.log("\n--- Starting Next.js data extraction phase ---\n");
         
+        // Ensure the json_data directory exists
+        const jsonDataDir = path.join(OUTPUT_DIR, 'json_data');
+        if (!fs.existsSync(jsonDataDir)) {
+            fs.mkdirSync(jsonDataDir, { recursive: true });
+        }
+        
         // Use the imported jsonExtractor module to process the HTML files
-        await jsonExtractor.extractNextJsData(collectedData, OUTPUT_DIR, OUTPUT_DIR);
+        await jsonExtractor.extractNextJsData(collectedData, OUTPUT_DIR, jsonDataDir);
         
         // Save the collected data summary as a JSON file
         try {
@@ -1842,6 +1850,42 @@ async function runScraper({domain = 'docs.lovable.dev', maxPages = 5}) {
         console.log("\n--- Mask-image URL replacements complete ---\n");
     }
 
+    // Function to create the preview-website.bat file in the output directory
+    async function createPreviewBatFile() {
+        console.log("\n--- Creating preview-website.bat file ---\n");
+        
+        // Content for the batch file to start a local server
+        const batFileContent = `@echo off
+echo Starting local server for viewing the archived website...
+echo.
+echo This will install http-server package temporarily if it's not already installed.
+echo.
+
+:: Run the server using npx
+npx http-server . -p 8095 -o
+
+:: If there's an error, pause to show the message
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo Error: Could not start the server. Make sure Node.js is installed.
+    pause
+    exit /b 1
+)
+
+:: The script should remain open as long as the server is running`;
+
+        try {
+            // Write the batch file to the output directory
+            const batFilePath = path.join(OUTPUT_DIR, 'preview-website.bat');
+            fs.writeFileSync(batFilePath, batFileContent);
+            console.log(`Created preview batch file: ${batFilePath}`);
+        } catch (error) {
+            console.error(`Error creating preview batch file: ${error.message}`);
+        }
+        
+        console.log("\n--- Preview batch file creation complete ---\n");
+    }
+
     console.log(`Starting scraper for ${BASE_URL}`);
     console.log(`Limiting to ${MAX_PAGES} pages`);
     console.log(`Output directory: ${OUTPUT_DIR}/`);
@@ -1892,11 +1936,15 @@ async function runScraper({domain = 'docs.lovable.dev', maxPages = 5}) {
         await processJsFiles();
         
         // Extract JSON data from Next.js HTML files
-     await extractNextJsData();
+        await extractNextJsData();
+        
+        // Create the preview-website.bat file in the output directory
+        await createPreviewBatFile();
         
         console.log(`\nScraping complete! Processed ${processed} pages.`);
         console.log(`Website saved to: ${path.resolve(OUTPUT_DIR)}`);
         console.log(`To view the site locally, run: npx http-server ${OUTPUT_DIR} -o`);
+        console.log(`Or simply double-click on the preview-website.bat file in the output folder.`);
     } catch (error) {
         console.error('Error in scraper:', error);
     } finally {

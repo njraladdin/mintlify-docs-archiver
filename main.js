@@ -26,7 +26,7 @@ const args = process.argv.slice(2);
 
 // Extract arguments with default for domain
 const domain = args.length > 0 ? args[0] : 'docs.lovable.dev';
-const maxPages = args.length > 1 ? parseInt(args[1], 10) : 5;
+const maxPages = args.length > 1 ? parseInt(args[1], 10) : -1;
 
 // Validate domain
 if (!domain.includes('.')) {

@@ -22,11 +22,14 @@ const DEBUG = process.env.DEBUG === 'true';
 async function extractNextJsData(collectedData, outputDir, jsonDir) {
     console.log("\n--- Starting Next.js data extraction phase ---\n");
     
-    let extractedCount = 0;
+    let processedCount = 0;
     
     // Process each HTML file to extract the Next.js data
     for (const page of collectedData.pages) {
         if (!page.htmlFile) continue;
+        
+        // Debug: Log the page object
+        console.log(`\n[DEBUG] Processing page:`, page);
         
         const htmlFilePath = path.join(outputDir, page.htmlFile);
         
@@ -34,28 +37,73 @@ async function extractNextJsData(collectedData, outputDir, jsonDir) {
             // Read the HTML file
             const htmlContent = await fs.readFile(htmlFilePath, 'utf8');
             
+            // Debug: Log the first 500 characters of the HTML file
+            console.log(`[DEBUG] First 500 chars of ${page.htmlFile}:\n`, htmlContent.slice(0, 500));
+            
             // Find the __NEXT_DATA__ script which contains JSON data
             const nextDataMatch = htmlContent.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+            
+            if (!nextDataMatch) {
+                console.log(`[DEBUG] __NEXT_DATA__ script NOT FOUND in ${page.htmlFile}`);
+                continue; // Skip to next page
+            }
             
             if (nextDataMatch && nextDataMatch[1]) {
                 try {
                     // Parse the JSON
                     const jsonData = JSON.parse(nextDataMatch[1]);
                     
-                    // Create a filename based on the page path
+                    // Debug: Log the first keys of the parsed JSON
+                    console.log(`[DEBUG] Parsed __NEXT_DATA__ keys:`, Object.keys(jsonData));
+                    
+                    // Create a filename based on the page path for the processed data
                     const jsonFilename = page.path === '/' 
                         ? 'index.json' 
                         : (page.path.replace(/^\//, '').replace(/\//g, '-') + '.json');
                     
-                    // Save the JSON to the json directory
-                    const jsonFilePath = path.join(jsonDir, jsonFilename);
-                    await fs.writeFile(jsonFilePath, JSON.stringify(jsonData, null, 2));
+                    // Find and process the compiledSource if it exists
+                    try {
+                        // Check if we can find the compiledSource - first try standard Next.js path
+                        let compiledSource = '';
+                        
+                        // Path finding - most Next.js apps have this in different structures
+                        if (jsonData.props?.pageProps?.content?.compiledSource) {
+                            // Nextra docs typical path
+                            compiledSource = jsonData.props.pageProps.content.compiledSource;
+                        } else if (jsonData.props?.pageProps?.MDXContent?.compiledSource) {
+                            // Some Next.js MDX setup
+                            compiledSource = jsonData.props.pageProps.MDXContent.compiledSource;
+                        } else if (jsonData.props?.pageProps?.ssg?.content?.compiledSource) {
+                            // Another common pattern
+                            compiledSource = jsonData.props.pageProps.ssg.content.compiledSource;
+                        } else {
+                            // Try to find compiledSource by searching through the object recursively
+                            console.log(`[DEBUG] Searching for compiledSource in JSON data...`);
+                            compiledSource = findCompiledSource(jsonData);
+                        }
+                        
+                        if (compiledSource) {
+                            console.log(`[DEBUG] Found compiledSource! Length: ${compiledSource.length}`);
+                            
+                            // Parse the compiled source
+                            const processedContent = parseCompiledSource(compiledSource, page.url);
+                            
+                            // Save the processed content
+                            const jsonFilePath = path.join(jsonDir, jsonFilename);
+                            await fs.writeFile(jsonFilePath, JSON.stringify(processedContent, null, 2));
+                            
+                            // Add the json file path to the page data
+                            page.processedDataFile = path.relative(outputDir, jsonFilePath);
+                            
+                            console.log(`Processed and saved Next.js data from ${page.htmlFile} to ${jsonFilename}`);
+                            processedCount++;
+                        } else {
+                            console.log(`[DEBUG] No compiledSource found in page ${page.path}`);
+                        }
+                    } catch (processError) {
+                        console.error(`Error processing compiledSource in ${page.htmlFile}: ${processError.message}`);
+                    }
                     
-                    // Add the json file path to the page data
-                    page.nextJsDataFile = path.relative(outputDir, jsonFilePath);
-                    
-                    console.log(`Extracted Next.js data from ${page.htmlFile} to ${jsonFilename}`);
-                    extractedCount++;
                 } catch (parseError) {
                     console.error(`Error parsing Next.js data in ${page.htmlFile}: ${parseError.message}`);
                 }
@@ -65,10 +113,34 @@ async function extractNextJsData(collectedData, outputDir, jsonDir) {
         }
     }
     
-    console.log(`\nExtracted Next.js data from ${extractedCount} pages`);
-    collectedData.stats.extractedNextJsData = extractedCount;
+    console.log(`\nProcessed and saved Next.js data from ${processedCount} pages`);
+    collectedData.stats.processedNextJsData = processedCount;
     
     console.log("\n--- Next.js data extraction phase complete ---\n");
+}
+
+/**
+ * Recursively search for compiledSource in a JSON object
+ * @param {Object} obj - The object to search in
+ * @returns {string|null} - The compiledSource if found, null otherwise
+ */
+function findCompiledSource(obj) {
+    if (!obj || typeof obj !== 'object') return null;
+    
+    // If this object has a compiledSource property, return it
+    if (obj.compiledSource && typeof obj.compiledSource === 'string') {
+        return obj.compiledSource;
+    }
+    
+    // Otherwise, search recursively in all child objects
+    for (const key in obj) {
+        if (typeof obj[key] === 'object') {
+            const result = findCompiledSource(obj[key]);
+            if (result) return result;
+        }
+    }
+    
+    return null;
 }
 
 /**

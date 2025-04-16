@@ -4,6 +4,9 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 const { URL } = require('url');
 
+// Import the JSON extractor module
+const jsonExtractor = require('./jsonExtractor');
+
 // --- Configuration ---
 const BASE_URL = 'https://docs.lovable.dev';
 const ALLOWED_DOMAINS = [
@@ -18,6 +21,7 @@ const CSS_DIR = path.join(OUTPUT_DIR, 'css');
 const JS_DIR = path.join(OUTPUT_DIR, 'js');
 const ASSETS_DIR = path.join(OUTPUT_DIR, 'assets');
 const FONTS_DIR = path.join(OUTPUT_DIR, 'fonts');
+const JSON_DIR = path.join(OUTPUT_DIR, 'json');
 const WAIT_TIME = 3000; // Time to wait for page to fully load in ms
 const MAX_PAGES = 5; // Maximum number of pages to process (set to -1 for unlimited)
 const DEBUG = true; // Enable debug logging
@@ -51,6 +55,91 @@ function makeSafeFilename(url) {
         // Get the file name from the pathname
         let filename = path.basename(pathname);
         
+        // Special handling for SVG files
+        if (url.toLowerCase().includes('.svg') || pathname.toLowerCase().endsWith('.svg')) {
+            // Check for various template patterns in the URL
+            if (url.includes('${t}') || url.includes('${r') || url.includes('$\\{t\\}')) {
+                // Extract the variable name from patterns with template literals
+                if (url.includes('lucide/${t}.svg') || url.includes('lucide/$\\{t\\}.svg')) {
+                    return "${t}.svg";
+                }
+                
+                // Handle other template patterns
+                if (url.includes('brands/${t}.svg') || url.includes('brands/$\\{t\\}.svg')) {
+                    return "${t}.svg";
+                }
+                
+                // Handle the pattern with r??\"regular\"
+                if (url.includes('${r??\"regular\"}/${t}') || url.includes('$\\{r\\?\\?\\\"regular\\\"\\}/$\\{t\\}')) {
+                    return "${t}.svg";
+                }
+                
+                // Default case for template variables
+                return "${t}.svg";
+            }
+            
+            // Check for placeholder template variables like ${t}
+            const templateMatch = url.match(/\/([^\/]+)\/${?t}?\.svg/i) || url.match(/\/([^\/]+)\$\{t\}\.svg/i);
+            if (templateMatch) {
+                return "${t}.svg";
+            }
+            
+            // First check for mintlify SVG patterns specifically
+            if (hostname.includes('mintlify') || url.includes('mintlify')) {
+                // Extract just the SVG name from patterns like mintlify-b-cdn-net/v6-6-0/regular/address-card.svg
+                const segments = pathname.split('/').filter(Boolean);
+                const lastSegment = segments[segments.length - 1];
+                
+                if (lastSegment) {
+                    // Clean up the segment, removing query params
+                    const cleanSegment = lastSegment.split('?')[0].split('#')[0];
+                    
+                    // If it's a direct SVG file
+                    if (cleanSegment.toLowerCase().endsWith('.svg')) {
+                        return cleanSegment.toLowerCase();
+                    }
+                    
+                    // If it doesn't have an extension, add .svg
+                    if (!cleanSegment.includes('.')) {
+                        return `${cleanSegment.toLowerCase()}.svg`;
+                    }
+                    
+                    return cleanSegment.toLowerCase();
+                }
+            }
+            
+            // Extract the base name for SVG files (removing any query params)
+            const svgName = path.basename(pathname).split('?')[0].split('#')[0];
+            if (svgName && svgName !== '/' && svgName.toLowerCase().endsWith('.svg')) {
+                return svgName.toLowerCase(); // Return just the SVG filename
+            }
+            
+            // If we can't extract the name directly, try to get it from the path
+            const segments = pathname.split('/').filter(Boolean);
+            let lastSegment = segments[segments.length - 1];
+            
+            // Clean up the segment, removing query params
+            if (lastSegment) {
+                lastSegment = lastSegment.split('?')[0].split('#')[0];
+                
+                if (lastSegment.toLowerCase().endsWith('.svg')) {
+                    return lastSegment.toLowerCase();
+                }
+            }
+            
+            // For SVGs in URL paths like /v6.6.0/lucide/search.svg, extract just the last part
+            if (segments.length > 0) {
+                const lastPathComponent = segments[segments.length - 1].split('?')[0].split('#')[0];
+                if (lastPathComponent) {
+                    // If it doesn't have an extension, add .svg
+                    if (!lastPathComponent.includes('.')) {
+                        return `${lastPathComponent.toLowerCase()}.svg`;
+                    }
+                    return lastPathComponent.toLowerCase();
+                }
+            }
+        }
+        
         // If filename is empty or just a slash, use part of the pathname
         if (!filename || filename === '/') {
             const segments = pathname.split('/').filter(Boolean);
@@ -61,8 +150,8 @@ function makeSafeFilename(url) {
                 filename += '.css';
             } else if (url.includes('.js') || url.endsWith('.js')) {
                 filename += '.js';
-            } else if (url.match(/\.(jpg|jpeg|png|gif|webp|avif)(\?|$)/i)) {
-                const match = url.match(/\.(jpg|jpeg|png|gif|webp|avif)(\?|$)/i);
+            } else if (url.match(/\.(jpg|jpeg|png|gif|svg|webp|avif)(\?|$)/i)) {
+                const match = url.match(/\.(jpg|jpeg|png|gif|svg|webp|avif)(\?|$)/i);
                 filename += '.' + match[1];
             }
         }
@@ -100,7 +189,7 @@ function isAllowedDomain(url) {
         }
         
         // Allow all media files (images, fonts)
-        if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'avif', 'woff', 'woff2', 'ttf', 'otf', 'eot'].includes(extension)) {
+        if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'avif', 'woff', 'woff2', 'ttf', 'otf', 'eot'].includes(extension)) {
             return true;
         }
         
@@ -126,7 +215,7 @@ function categorizeResource(url) {
         return 'js';
     } else if (['woff', 'woff2', 'ttf', 'otf', 'eot'].includes(extension)) {
         return 'font';
-    } else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'avif'].includes(extension) || 
+    } else if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'avif'].includes(extension) || 
               lowerUrl.includes('/images/') || lowerUrl.includes('/static/media/')) {
         return 'image';
     } else {
@@ -211,7 +300,7 @@ async function collectPageResources(page) {
             const lowerUrl = url.toLowerCase();
             const extension = lowerUrl.split('.').pop().split('?')[0];
             const isCssOrMedia = lowerUrl.endsWith('.css') || lowerUrl.includes('.css?') || extension === 'css' || 
-                               ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'avif', 'woff', 'woff2', 'ttf', 'otf', 'eot'].includes(extension);
+                               ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'avif', 'woff', 'woff2', 'ttf', 'otf', 'eot'].includes(extension);
             
             if ((isCssOrMedia || isAllowedDomain(url)) && 
                 !url.startsWith('data:') && 
@@ -240,7 +329,7 @@ async function collectPageResources(page) {
             }
             
             // Get all resources from the page
-            document.querySelectorAll('link[rel="stylesheet"], link[data-href], link[data-n-href], style[data-href], style[data-n-href], script[src], img[src], source[src], image').forEach(el => {
+            document.querySelectorAll('link[rel="stylesheet"], link[data-href], link[data-n-href], style[data-href], style[data-n-href], script[src], img[src], source[src], image, svg image[href], svg use[href], svg [xlink\\:href]').forEach(el => {
                 let url;
                 if (el.tagName === 'LINK') {
                     // Next.js may use data-href or data-n-href for stylesheets
@@ -250,7 +339,8 @@ async function collectPageResources(page) {
                     url = el.getAttribute('data-href') || el.getAttribute('data-n-href');
                 } else if (el.tagName === 'SCRIPT') url = el.src;
                 else if (el.tagName === 'IMG' || el.tagName === 'SOURCE') url = el.src;
-                else if (el.tagName === 'IMAGE') url = el.getAttribute('href');
+                else if (el.tagName === 'IMAGE' || (el.tagName === 'USE' && el.hasAttribute('href'))) url = el.getAttribute('href');
+                else if (el.hasAttribute('xlink:href')) url = el.getAttribute('xlink:href');
                 
                 const absUrl = toAbsoluteUrl(url);
                 if (absUrl) {
@@ -303,6 +393,23 @@ async function collectPageResources(page) {
                 }
             });
             
+            // Extract SVG images from mask-image properties (including those with encoded quotes)
+            document.querySelectorAll('[style*="mask-image"]').forEach(el => {
+                const styleAttr = el.getAttribute('style');
+                if (styleAttr) {
+                    // Handle both regular quotes and HTML entity quotes (&quot;)
+                    const maskUrlRegex = /mask-image:\s*url\((?:['"]|&quot;)([^'"&]*)(?:['"]|&quot;)\)/i;
+                    const match = maskUrlRegex.exec(styleAttr);
+                    if (match && match[1]) {
+                        const svgUrl = match[1];
+                        const absUrl = toAbsoluteUrl(svgUrl);
+                        if (absUrl) {
+                            items.push(absUrl);
+                        }
+                    }
+                }
+            });
+            
             // Also look for dynamically loaded resources in inline scripts
             document.querySelectorAll('script:not([src])').forEach(script => {
                 const content = script.textContent || '';
@@ -326,8 +433,8 @@ async function collectPageResources(page) {
                     }
                 }
                 
-                // Look for image files
-                const imagePattern = /(['"])(https?:\/\/[^'"]+\.(png|jpg|jpeg|gif|webp|avif)|\/[^'"]+\.(png|jpg|jpeg|gif|webp|avif))['"]/g;
+                // Look for image files - be extra thorough with SVG files
+                const imagePattern = /(['"])(https?:\/\/[^'"]+\.(png|jpg|jpeg|gif|svg|webp|avif)|\/[^'"]+\.(png|jpg|jpeg|gif|svg|webp|avif))['"]/g;
                 while ((match = imagePattern.exec(content)) !== null) {
                     if (match[2]) {
                         const absUrl = toAbsoluteUrl(match[2]);
@@ -434,6 +541,16 @@ async function collectPageResources(page) {
                 const jsPath = jsMatch[0];
                 const fullJsUrl = BASE_URL + '/' + jsPath.replace(/^\//, '');
                 resources.push(fullJsUrl);
+            }
+        }
+        
+        // Extract SVG files from mask-image in the raw HTML (to handle &quot; entity encoding)
+        const maskImagePattern = /mask-image:\s*url\(&quot;([^&]+)&quot;\)/g;
+        let svgMatch;
+        while ((svgMatch = maskImagePattern.exec(pageHtml)) !== null) {
+            const svgUrl = svgMatch[1];
+            if (svgUrl && svgUrl.toLowerCase().endsWith('.svg')) {
+                resources.push(svgUrl);
             }
         }
         
@@ -814,15 +931,74 @@ async function processHtmlFiles(collectedData) {
                 js: 0,
                 images: 0,
                 fonts: 0,
-                other: 0
+                other: 0,
+                svgToImg: 0
             };
+            
+            // First, handle SVG elements containing mintlify in style attribute or mask-image URLs
+            // Find and replace all SVG elements with mask-image properties
+            // This approach looks for any SVG with style containing mask-image regardless of URL format
+            const svgRegex = /<svg[^>]*style=["']([^"']*mask-image[^"']*)["'][^>]*>[\s\S]*?<\/svg>/gi;
+            let svgMatch;
+            
+            // Store all replacements to apply at once
+            const svgReplacements = [];
+            
+            // // First pass - identify all SVGs with mask-image
+            // while ((svgMatch = svgRegex.exec(htmlContent)) !== null) {
+            //     const fullSvgElement = svgMatch[0];
+            //     const stylesAttribute = svgMatch[1];
+                
+            //     // Check if it contains mintlify in the mask-image URL
+            //     if (stylesAttribute.includes('mintlify')) {
+            //         // Extract all attributes from the SVG element
+            //         const classMatch = /class=["']([^"']*)["']/i.exec(fullSvgElement);
+            //         const classAttr = classMatch ? classMatch[1] : '';
+                    
+            //         // Extract other style properties we want to keep
+            //         const stylesWithoutMask = stylesAttribute.replace(/(-webkit-)?mask-image:[^;]+;?/g, '')
+            //             .replace(/(-webkit-)?mask-repeat:[^;]+;?/g, '')
+            //             .replace(/(-webkit-)?mask-position:[^;]+;?/g, '');
+                    
+            //         // Create a direct image element instead
+            //         // Don't use the local file path - keep the original asset path
+            //         const imgElement = `<img class="${classAttr}" style="${stylesWithoutMask}" alt="" src="${extractAssetPath(stylesAttribute)}" />`;
+                    
+            //         // Add to replacements list
+            //         svgReplacements.push({
+            //             original: fullSvgElement,
+            //             replacement: imgElement
+            //         });
+            //         replacementCounts.svgToImg++;
+            //     }
+            // }
+            
+            // Helper function to extract the asset path from style attribute
+            function extractAssetPath(style) {
+                // Look for the mask-image URL pattern in the style
+                const maskMatch = /mask-image:\s*url\(['"]?(.*?)['"]?\)/i.exec(style);
+                if (maskMatch && maskMatch[1]) {
+                    return maskMatch[1];
+                }
+                // Fallback to webkit version if regular mask-image not found
+                const webkitMatch = /-webkit-mask-image:\s*url\(['"]?(.*?)['"]?\)/i.exec(style);
+                if (webkitMatch && webkitMatch[1]) {
+                    return webkitMatch[1];
+                }
+                return '';
+            }
+            
+            // Apply SVG -> IMG replacements
+            for (const replacement of svgReplacements) {
+                htmlContent = htmlContent.replace(replacement.original, replacement.replacement);
+            }
             
             // Replace each resource URL with its local path
             for (const [remoteUrl, localPath] of resourceUrlMap.entries()) {
                 // Determine resource type
                 const isCSS = remoteUrl.toLowerCase().includes('.css') || categorizeResource(remoteUrl) === 'css';
                 const isJS = remoteUrl.toLowerCase().includes('.js') || categorizeResource(remoteUrl) === 'js';
-                const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'avif'].some(ext => 
+                const isImage = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'avif'].some(ext => 
                     remoteUrl.toLowerCase().includes('.' + ext)) || categorizeResource(remoteUrl) === 'image';
                 const isFont = ['woff', 'woff2', 'ttf', 'otf', 'eot'].some(ext => 
                     remoteUrl.toLowerCase().includes('.' + ext)) || categorizeResource(remoteUrl) === 'font';
@@ -1002,7 +1178,7 @@ async function processHtmlFiles(collectedData) {
             
             // Save the modified HTML file
             await fs.writeFile(htmlFilePath, htmlContent);
-            console.log(`Replaced resources in ${htmlFilePath}: CSS (${replacementCounts.css}), JS (${replacementCounts.js}), Images (${replacementCounts.images}), Fonts (${replacementCounts.fonts}), Other (${replacementCounts.other})`);
+            console.log(`Replaced resources in ${htmlFilePath}: CSS (${replacementCounts.css}), JS (${replacementCounts.js}), Images (${replacementCounts.images}), Fonts (${replacementCounts.fonts}), Other (${replacementCounts.other}), SVG→IMG (${replacementCounts.svgToImg})`);
             
             // Update the page data to indicate it was processed
             page.htmlProcessed = true;
@@ -1317,6 +1493,357 @@ async function processJsFiles(collectedData) {
     console.log("\n--- JS processing phase complete ---\n");
 }
 
+/**
+ * Process JS files to handle specific edge cases and patterns
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function processJsFileEdgeCases(collectedData) {
+    console.log("\n--- Starting JS edge case processing phase ---\n");
+    
+    // Create a mapping specifically for JS files
+    const jsResources = [];
+    
+    // Collect all JS resources
+    for (const page of collectedData.pages) {
+        for (const resource of page.resources.js) {
+            if (resource.downloaded && resource.localPath) {
+                jsResources.push(resource);
+            }
+        }
+    }
+    
+    console.log(`Processing ${jsResources.length} JS files for specific string replacements`);
+    
+    // Process each JS file
+    let processedCount = 0;
+    
+    for (const resource of jsResources) {
+        const jsFilePath = path.join(OUTPUT_DIR, resource.localPath);
+        
+        try {
+            // Skip if the file doesn't exist
+            if (!(await fs.access(jsFilePath).then(() => true).catch(() => false))) {
+                continue;
+            }
+            
+            // Read the JS file
+            let jsContent = await fs.readFile(jsFilePath, 'utf8');
+            let replacementsMade = 0;
+            
+            // 1. Replace "pdf"===d with "pdf"==="pdf"
+            const pdfCheck = /"pdf"===d/g;
+            const pdfReplacements = (jsContent.match(pdfCheck) || []).length;
+            if (pdfReplacements > 0) {
+                jsContent = jsContent.replace(pdfCheck, '"pdf"==="pdf"');
+                replacementsMade += pdfReplacements;
+            }
+            
+            // 2. Replace Mintlify CDN URLs with local paths
+            const replacements = [
+                {
+                    pattern: /https:\/\/mintlify\.b-cdn\.net\/v6\.6\.0\/lucide\/\$\{t\}\.svg/g,
+                    replacement: "assets/${t}.svg"
+                },
+                {
+                    pattern: /https:\/\/mintlify\.b-cdn\.net\/v6\.6\.0\/\$\{r\?\?\"regular\"\}\/\$\{t\}/g,
+                    replacement: "assets/${t}"
+                },
+                {
+                    pattern: /https:\/\/mintlify\.b-cdn\.net\/v6\.6\.0\/brands\/\$\{t\}\.svg/g,
+                    replacement: "assets/${t}.svg"
+                },
+                {
+                    pattern: /backgroundColor:"transparent"/g,
+                    replacement: 'backgroundColor:\"white\",borderRadius:3,padding:"1px"'
+                }
+            ];
+            
+            for (const { pattern, replacement } of replacements) {
+                const count = (jsContent.match(pattern) || []).length;
+                if (count > 0) {
+                    jsContent = jsContent.replace(pattern, replacement);
+                    replacementsMade += count;
+                }
+            }
+            
+            // Save the file if changes were made
+            if (replacementsMade > 0) {
+                await fs.writeFile(jsFilePath, jsContent);
+                console.log(`Applied ${replacementsMade} edge case replacements in JS file: ${jsFilePath}`);
+                processedCount++;
+            }
+            
+        } catch (error) {
+            console.error(`Error processing JS file edge cases in ${jsFilePath}: ${error.message}`);
+        }
+    }
+    
+    console.log(`\nProcessed ${processedCount} JS files with edge case replacements`);
+    console.log("\n--- JS edge case processing phase complete ---\n");
+}
+
+/**
+ * Process navigation links to add base tag and fix relative paths
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function processNavigationLinks(collectedData) {
+    console.log("\n--- Starting navigation link processing phase ---\n");
+    
+    // Process each HTML file
+    let processedFileCount = 0;
+    
+    for (const page of collectedData.pages) {
+        if (!page.htmlFile) continue;
+        
+        const htmlFilePath = path.join(OUTPUT_DIR, page.htmlFile);
+        console.log(`Processing navigation links in: ${htmlFilePath}`);
+        
+        try {
+            // Read the HTML file
+            let htmlContent = await fs.readFile(htmlFilePath, 'utf8');
+            
+            // Insert script immediately after the opening head tag
+            const headStartIndex = htmlContent.indexOf('<head>');
+            if (headStartIndex !== -1) {
+                const fixScript = `<head>
+  <!-- Direct Link Fixer - Absolute Path Edition -->
+  <script>
+    // This script runs immediately during parsing
+    (function() {
+      // Function to convert a path like /features/dev-mode to features-dev-mode.html
+      function convertPathToFilename(path) {
+        if (!path || !path.startsWith('/')) return path;
+        // Remove leading slash, replace internal slashes with dashes
+        let localPath = path.substring(1).replace(/\\//g, '-');
+        // Add .html if no extension exists
+        if (!localPath.includes('.')) {
+          localPath += '.html';
+        }
+        return localPath;
+      }
+      
+      // Fix a single link
+      function fixLink(link) {
+        const href = link.getAttribute('href');
+        if (!href || !href.startsWith('/')) return;
+        
+        const localPath = convertPathToFilename(href);
+        
+        // Update the href attribute with a fixed path - no basePath needed!
+        link.setAttribute('href', localPath);
+        
+        // Add click handler for extra safety
+        if (!link.__linkFixed) {
+          link.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            window.location.href = localPath;
+          }, true);
+          link.__linkFixed = true;
+        }
+      }
+      
+      // Fix links within a specific element
+      function fixLinksInElement(element) {
+        // Process <a> tags with href starting with /
+        const links = element.querySelectorAll('a[href^="/"]');
+        links.forEach(fixLink);
+        
+        // Also check if the element itself is a link
+        if (element.tagName === 'A' && element.href && element.getAttribute('href').startsWith('/')) {
+          fixLink(element);
+        }
+      }
+      
+      // Fix all links in the document
+      function fixAllLinks() {
+        document.querySelectorAll('a[href^="/"]').forEach(fixLink);
+      }
+      
+      // Create MutationObserver to fix links as soon as they appear in the DOM
+      function setupLinkObserver() {
+        // Create an observer instance
+        const observer = new MutationObserver(function(mutations) {
+          mutations.forEach(function(mutation) {
+            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+              for (let i = 0; i < mutation.addedNodes.length; i++) {
+                const node = mutation.addedNodes[i];
+                if (node.nodeType === 1) { // ELEMENT_NODE
+                  fixLinksInElement(node);
+                }
+              }
+            }
+          });
+        });
+        
+        // Start observing the document body for DOM changes
+        observer.observe(document.documentElement || document.body, {
+          childList: true,
+          subtree: true
+        });
+      }
+      
+      // Intercept all navigation to fix paths
+      function interceptNavigation() {
+        // Override original click handler
+        document.addEventListener('click', function(event) {
+          const target = event.target.closest('a');
+          if (target && target.href && target.getAttribute('href').startsWith('/')) {
+            event.preventDefault();
+            event.stopPropagation();
+            
+            const href = target.getAttribute('href');
+            const localPath = convertPathToFilename(href);
+            
+            console.log('Intercepted navigation to', href, '- redirecting to', localPath);
+            window.location.href = localPath;
+            return false;
+          }
+        }, true);
+        
+        // Store original window.open
+        const originalOpen = window.open;
+        window.open = function(url, ...args) {
+          if (url && typeof url === 'string' && url.startsWith('/')) {
+            const localPath = convertPathToFilename(url);
+            return originalOpen.call(this, localPath, ...args);
+          }
+          return originalOpen.apply(this, arguments);
+        };
+      }
+      
+      // Set up everything
+      function init() {
+        fixAllLinks();
+        setupLinkObserver();
+        interceptNavigation();
+      }
+      
+      // Run immediately if possible, otherwise wait for DOM
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+      
+      // Try an immediate first pass on any elements already in the DOM
+      if (document.body) {
+        fixAllLinks();
+      }
+    })();
+  </script>`;
+                
+                // Insert the script at the beginning of the head
+                htmlContent = htmlContent.replace('<head>', fixScript);
+                
+                // Save the modified file
+                await fs.writeFile(htmlFilePath, htmlContent);
+                console.log(`Added absolute path link fixer script to ${htmlFilePath}`);
+                processedFileCount++;
+            } else {
+                console.warn(`Could not find <head> tag in ${htmlFilePath}`);
+            }
+            
+        } catch (error) {
+            console.error(`Error processing navigation links in ${htmlFilePath}: ${error.message}`);
+        }
+    }
+    
+    console.log(`\nProcessed ${processedFileCount} HTML files with direct link fixer script`);
+    console.log("\n--- Navigation link processing phase complete ---\n");
+}
+
+/**
+ * Extract Next.js data from HTML files and save it to JSON folder
+ * @param {Object} collectedData - The data collected from all pages
+ * @returns {Promise<void>}
+ */
+async function extractNextJsData(collectedData) {
+    // Delegate to the jsonExtractor module
+    await jsonExtractor.extractNextJsData(collectedData, OUTPUT_DIR, JSON_DIR);
+}
+
+// Create a new function to create redirect files
+async function createRedirectFiles(collectedData) {
+    console.log("\n--- Starting redirect file creation phase ---\n");
+    
+    // Keep track of created directories and files
+    const createdDirs = new Set();
+    let createdFileCount = 0;
+    
+    // Get all unique path segments that would be directories
+    for (const page of collectedData.pages) {
+        if (!page.path || page.path === '/') continue;
+        
+        // Skip the file if it doesn't have a path with slashes
+        if (!page.path.includes('/')) continue;
+        
+        // Get the directory path segments
+        const pathSegments = page.path.split('/').filter(Boolean);
+        
+        // Skip if there are no segments
+        if (pathSegments.length === 0) continue;
+        
+        // Determine the file name that was actually saved
+        // The actual file is saved with dashes instead of slashes
+        const actualFileName = page.path.replace(/^\//, '').replace(/\//g, '-') + '.html';
+        
+        // Build the directory structure
+        let currentDir = OUTPUT_DIR;
+        for (let i = 0; i < pathSegments.length; i++) {
+            currentDir = path.join(currentDir, pathSegments[i]);
+            
+            // Create the directory if it doesn't exist
+            if (!createdDirs.has(currentDir)) {
+                try {
+                    await fs.mkdir(currentDir, { recursive: true });
+                    createdDirs.add(currentDir);
+                    console.log(`Created directory: ${currentDir}`);
+                } catch (error) {
+                    console.error(`Error creating directory ${currentDir}:`, error.message);
+                }
+            }
+            
+            // If this is the last segment, create a redirect HTML file
+            if (i === pathSegments.length - 1) {
+                try {
+                    // Determine relative path back to the root
+                    const relativePath = '../'.repeat(pathSegments.length);
+                    
+                    // Create redirect HTML
+                    const redirectHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="0;url=${relativePath}${actualFileName}">
+    <title>Redirecting...</title>
+</head>
+<body>
+    <p>Redirecting to the correct page...</p>
+    <script>
+        window.location.href = "${relativePath}${actualFileName}";
+    </script>
+</body>
+</html>`;
+                    
+                    // Write the redirect file
+                    const redirectFilePath = path.join(currentDir, 'index.html');
+                    await fs.writeFile(redirectFilePath, redirectHtml);
+                    createdFileCount++;
+                    console.log(`Created redirect file: ${redirectFilePath} -> ${actualFileName}`);
+                } catch (error) {
+                    console.error(`Error creating redirect file for ${page.path}:`, error.message);
+                }
+            }
+        }
+    }
+    
+    console.log(`\nCreated ${createdFileCount} redirect files in ${createdDirs.size} directories`);
+    console.log("\n--- Redirect file creation phase complete ---\n");
+}
+
 // Main execution function
 async function main() {
     const maxPages = MAX_PAGES;
@@ -1328,6 +1855,7 @@ async function main() {
     await ensureOutputDir(JS_DIR);
     await ensureOutputDir(ASSETS_DIR);
     await ensureOutputDir(FONTS_DIR);
+    await ensureOutputDir(JSON_DIR);
     
     // Initialize data collection object
     const collectedData = {
@@ -1350,7 +1878,8 @@ async function main() {
             downloadStatus: {
                 success: 0,
                 failed: 0
-            }
+            },
+            extractedNextJsData: 0
         }
     };
     
@@ -1427,7 +1956,19 @@ async function main() {
     // Phase 5: Process JS files
     await processJsFiles(collectedData);
     
-    // Phase 7: Save the final data
+    // Phase 6: Process JS edge cases
+    await processJsFileEdgeCases(collectedData);
+    
+    // Phase 7: Process navigation links
+    await processNavigationLinks(collectedData);
+    
+    // Phase 8: Create redirect files for virtual directories
+    await createRedirectFiles(collectedData);
+    
+    // Phase 9: Extract Next.js data
+    await extractNextJsData(collectedData);
+    
+    // Phase 10: Save the final data
     const outputFile = path.join(OUTPUT_DIR, 'collected-data.json');
     await fs.writeFile(outputFile, JSON.stringify(collectedData, null, 2));
     console.log(`Saved collected data to ${outputFile}`);
